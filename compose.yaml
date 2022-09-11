@@ -1,0 +1,85 @@
+version: '3'
+
+services:
+  # give each service a proper name
+  # we create a base service since the migrations and apps service share the image build and configurations
+  my-app-base:
+    # since the build is in the base only 1 image will be build
+    build: .
+    # we need to define a network so the app and database can talk to each other
+    # note that if we do not define a network then the app can't talk to anything !!!!!!
+    networks:
+    - my-app-network
+    environment:
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: postgres
+      DB_HOST: my-app-db
+      DB_PORT: "5432"
+      DB_ENGINE: POSTGRES
+    # we use profiles to not allow the base service to run (this is a hack !!!!!)
+    profiles:
+    - do-not-start
+
+  my-app-migrations:
+    extends:
+      service: my-app-base
+    restart: "no"
+    # before the migrations starts we need to make sure the db is healthy
+    depends_on:
+      my-app-db:
+        condition: service_healthy
+    # here we re-use the main app container, but we override the command to only run migrations
+    command: ["flask", "db", "upgrade"]
+    # since we added a profile for the base service we have to add one here to make this service run
+    # since docker compose does not support an any profile statement we add the profile "run"
+    profiles:
+    - run
+
+  my-app:
+    extends:
+      service: my-app-base
+    restart: "always"
+    # before the application starts we need to run the db and migrations
+    depends_on:
+      # the application only runs after the migrations are completed successfully
+      my-app-migrations:
+        condition: service_completed_successfully
+      # this might not be needed since the migrations only run if the DB is healthy but I added it just in case
+      my-app-db:
+        condition: service_healthy
+    # these are the ports to be mapped on the host machine
+    ports:
+    - "5225:5000"
+    # since we added a profile for the base service we have to add one here to make this service run
+    # since docker compose does not support an any profile statement we add the profile "run"
+    profiles:
+    - run
+
+  my-app-db:
+    image: postgres:13-alpine
+    restart: "always"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    # we need to define a network so the app and database can talk to each other
+    networks:
+      - my-app-network
+    # these are the ports to be exposed on the internal "Virtual" docker network
+    expose:
+      - "5432"
+    # these are the ports to be mapped on the host machine
+    ports:
+      - "5226:5432"
+    # health check is added, so we can use the condition in the dependency check
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+# we need to define a network so the app and database can talk to each other
+# you can list these using the command "docker network ls"
+networks:
+  my-app-network:
+
